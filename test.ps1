@@ -1,222 +1,104 @@
+﻿
+DECLARE @SourceServer sysname
+DECLARE @ScriptPath nvarchar(max)
+DECLARE @ProxyName sysname
 
-# Define the path to the servers list file
-$serversListPath = ".\servers.txt"
+SET @SourceServer = 'MyServer\MyInstance'  -- The SQL Server instance name to be monitored
+SET @ScriptPath = 'D:\PerformanceStore'    -- The directory where the PowerShell scripts are located
+SET @ProxyName = 'PerformanceStore'        -- The name of the SQL Server Agent Proxy
 
-# Email configuration  
-$emailParams = @{
-    SmtpServer = "smtp.gmail.com"
-    Port = 25
-    From = "sqlmonitoring@gmail.com"
-    To = "admin@gmail.com"  # Can be comma-separated list: "admin1@domain.com,admin2@domain.com"
-    Subject = "SQL Server SSL Certificate Status Report - $(Get-Date -Format 'yyyy-MM-dd')"
-    # UseSsl = $true  # Uncomment if SSL is required
-    # Credential = $credential  # Uncomment and set if authentication is required
-}
+DECLARE @JobCategory nvarchar(max)
+DECLARE @JobOwner nvarchar(max)
 
-# Check if the servers file exists
-if (-not (Test-Path $serversListPath)) {
-    Write-Error "Server list file not found at $serversListPath"
-    exit 1
-}
+DECLARE @JobNameExtendedEvents nvarchar(max)
+DECLARE @JobNameSessions nvarchar(max)
+DECLARE @JobNameStatistics nvarchar(max)
+DECLARE @JobNameDataPurge nvarchar(max)
 
-# Read the list of servers from the file
-$servers = Get-Content $serversListPath | Where-Object { $_ -match '\S' }
+DECLARE @JobCommandExtendedEvents nvarchar(max)
+DECLARE @JobCommandSessions nvarchar(max)
+DECLARE @JobCommandStatistics nvarchar(max)
+DECLARE @JobCommandDataPurge nvarchar(max)
 
-# Create a timestamp for the report filename
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$reportFile = ".\SSL_Certificate_Report_$timestamp.csv"
+DECLARE @ScheduleNameStatistics nvarchar(max)
+DECLARE @ScheduleNameExtendedEvents nvarchar(max)
+DECLARE @ScheduleNameSessions nvarchar(max)
+DECLARE @ScheduleNameDataPurge nvarchar(max)
 
-Write-Host "Checking SSL certificates on $(($servers | Measure-Object).Count) SQL Servers..."
+SET @JobCategory = 'PerformanceStore'
+SET @JobOwner = SUSER_SNAME(0x01)
 
-# Initialize a collection for results
-$results = @()
+SET @JobNameExtendedEvents = 'PerformanceStore - ExtendedEvents - ' + @SourceServer
+SET @JobCommandExtendedEvents = 'powershell ' + @ScriptPath + IIF(RIGHT(@ScriptPath,1) = '\','','\') + 'ExtendedEvents_Init.ps1' + ' -SourceServer """' + @SourceServer + '"""'
+SET @ScheduleNameExtendedEvents = 'PerformanceStore - ExtendedEvents'
 
-foreach ($serverName in $servers) {
-    Write-Host "Processing server: $serverName" -ForegroundColor Cyan
-    
-    try {
-        # Get SSL certificate information using DbaTools
-        $certificates = Get-DbaComputerCertificate -ComputerName $serverName -ErrorAction Stop
-        
-        # Filter for SQL Server related certificates
-        $sqlCertificates = $certificates | Where-Object {
-            ($_.Subject -like "*SQL*") -or 
-            ($_.FriendlyName -like "*SQL*") -or
-            ($_.DnsNameList -like "*SQL*") -or
-            ($_.EnhancedKeyUsageList -like "*SQL*")
-        }
-        
-        if ($sqlCertificates.Count -eq 0) {
-            Write-Host "  No SQL Server certificates found on $serverName" -ForegroundColor Yellow
-            
-            # Add a result entry for servers with no certificates
-            $results += [PSCustomObject]@{
-                ServerName = $serverName
-                CertificateName = "No SQL certificates found"
-                Thumbprint = "N/A"
-                NotBefore = "N/A"
-                NotAfter = "N/A"
-                IsExpired = "N/A"
-                DaysUntilExpiration = "N/A"
-                Status = "WARNING: No SQL certificates found"
-            }
-        }
-        else {
-            foreach ($cert in $sqlCertificates) {
-                # Calculate expiration status
-                $now = Get-Date
-                $isExpired = $cert.NotAfter -lt $now
-                $daysUntilExpiration = ($cert.NotAfter - $now).Days
-                
-                # Determine status
-                $status = if ($isExpired) {
-                    "EXPIRED"
-                } elseif ($daysUntilExpiration -le 30) {
-                    "WARNING: Expires in $daysUntilExpiration days"
-                } else {
-                    "OK"
-                }
-                
-                # Output certificate information
-                if ($isExpired) {
-                    Write-Host "  [EXPIRED] $($cert.FriendlyName) - Expired on $($cert.NotAfter)" -ForegroundColor Red
-                } elseif ($daysUntilExpiration -le 30) {
-                    Write-Host "  [WARNING] $($cert.FriendlyName) - Expires in $daysUntilExpiration days" -ForegroundColor Yellow
-                } else {
-                    Write-Host "  [OK] $($cert.FriendlyName) - Valid until $($cert.NotAfter)" -ForegroundColor Green
-                }
-                
-                # Add to results collection
-                $results += [PSCustomObject]@{
-                    ServerName = $serverName
-                    CertificateName = $cert.FriendlyName
-                    Thumbprint = $cert.Thumbprint
-                    Subject = $cert.Subject
-                    NotBefore = $cert.NotBefore
-                    NotAfter = $cert.NotAfter
-                    IsExpired = $isExpired
-                    DaysUntilExpiration = $daysUntilExpiration
-                    Status = $status
-                }
-            }
-        }
-    }
-    catch {
-        Write-Host "  [ERROR] Failed to check certificates on $serverName. Error: $($_.Exception.Message)" -ForegroundColor Red
-        
-        # Add error entry to results
-        $results += [PSCustomObject]@{
-            ServerName = $serverName
-            CertificateName = "ERROR"
-            Thumbprint = "N/A"
-            NotBefore = "N/A"
-            NotAfter = "N/A"
-            IsExpired = "N/A"
-            DaysUntilExpiration = "N/A"
-            Status = "ERROR: $($_.Exception.Message)"
-        }
-    }
-}
+SET @JobNameSessions = 'PerformanceStore - Sessions - ' + @SourceServer
+SET @JobCommandSessions = 'powershell ' + @ScriptPath + IIF(RIGHT(@ScriptPath,1) = '\','','\') + 'Sessions_Init.ps1' + ' -SourceServer """' + @SourceServer + '"""'
+SET @ScheduleNameSessions = 'PerformanceStore - Sessions'
 
-# Export results to CSV
-$results | Export-Csv -Path $reportFile -NoTypeInformation
+SET @JobNameStatistics = 'PerformanceStore - Statistics - ' + @SourceServer
+SET @JobCommandStatistics = 'powershell ' + @ScriptPath + IIF(RIGHT(@ScriptPath,1) = '\','','\') + 'Statistics_Init.ps1' + ' -SourceServer """' + @SourceServer + '"""'
+SET @ScheduleNameStatistics = 'PerformanceStore - Statistics'
 
-# Generate HTML report for email
-$expiredCount = ($results | Where-Object {$_.Status -eq 'EXPIRED'} | Select-Object -Unique ServerName | Measure-Object).Count
-$warningCount = ($results | Where-Object {$_.Status -like 'WARNING*' -and $_.Status -ne 'WARNING: No SQL certificates found'} | Select-Object -Unique ServerName | Measure-Object).Count
-$errorCount = ($results | Where-Object {$_.Status -like 'ERROR*'} | Select-Object -Unique ServerName | Measure-Object).Count
+SET @JobNameDataPurge = 'PerformanceStore - DataPurge'
+SET @JobCommandDataPurge = 'powershell ' + @ScriptPath + IIF(RIGHT(@ScriptPath,1) = '\','','\') + 'DataPurge_Init.ps1'
+SET @ScheduleNameDataPurge = 'PerformanceStore - DataPurge'
 
-# Create HTML report with styling
-$htmlReport = @"
-<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body { font-family: Arial, sans-serif; }
-        h1 { color: #0066cc; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { padding: 8px; text-align: left; border: 1px solid #ddd; }
-        th { background-color: #f2f2f2; }
-        tr.expired { background-color: #ffcccc; }
-        tr.warning { background-color: #fff4cc; }
-        tr.error { background-color: #f2f2f2; }
-        .summary { margin: 20px 0; padding: 10px; background-color: #f2f2f2; border-radius: 5px; }
-        .expired { color: red; }
-        .warning { color: orange; }
-        .error { color: gray; }
-    </style>
-</head>
-<body>
-    <h1>SQL Server SSL Certificate Status Report</h1>
-    <p>Report generated on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')</p>
-    
-    <div class="summary">
-        <h2>Summary</h2>
-        <p>Total servers checked: $(($servers | Measure-Object).Count)</p>
-        <p class="expired">Servers with expired certificates: $expiredCount</p>
-        <p class="warning">Servers with certificates expiring within 30 days: $warningCount</p>
-        <p class="error">Servers with errors: $errorCount</p>
-    </div>
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysproxies WHERE name = @ProxyName)
+BEGIN
+  RAISERROR ('The specified Proxy does not exist.', 16, 1)
+  RETURN
+END
 
-    <h2>Certificate Details</h2>
-    <table>
-        <tr>
-            <th>Server Name</th>
-            <th>Certificate Name</th>
-            <th>Not After</th>
-            <th>Days Until Expiration</th>
-            <th>Status</th>
-        </tr>
-"@
+IF NOT EXISTS (SELECT * FROM msdb.dbo.syscategories WHERE name = @JobCategory)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_category @class = 'JOB', @type= 'LOCAL', @name = @JobCategory 
+END
 
-foreach ($result in $results) {
-    $rowClass = switch -Wildcard ($result.Status) {
-        "EXPIRED" { "expired" }
-        "WARNING*" { "warning" }
-        "ERROR*" { "error" }
-        default { "" }
-    }
-    
-    $htmlReport += @"
-        <tr class="$rowClass">
-            <td>$($result.ServerName)</td>
-            <td>$($result.CertificateName)</td>
-            <td>$($result.NotAfter)</td>
-            <td>$($result.DaysUntilExpiration)</td>
-            <td>$($result.Status)</td>
-        </tr>
-"@
-}
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysschedules WHERE [name] = @ScheduleNameExtendedEvents)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_schedule @schedule_name = @ScheduleNameExtendedEvents, @enabled=1, @freq_type=4, @freq_interval=1, @freq_subday_type=2, @freq_subday_interval=30, @freq_relative_interval=0, @freq_recurrence_factor=0, @active_start_time=10, @active_end_time=235959
+END
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE [name] = @JobNameExtendedEvents)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_job @job_name = @JobNameExtendedEvents, @category_name = @JobCategory, @owner_login_name = @JobOwner
+  EXECUTE msdb.dbo.sp_add_jobstep @job_name = @JobNameExtendedEvents, @step_name = @JobNameExtendedEvents, @subsystem = 'CMDEXEC', @command = @JobCommandExtendedEvents, @proxy_name = @ProxyName
+  EXECUTE msdb.dbo.sp_add_jobserver @job_name = @JobNameExtendedEvents
+  EXECUTE msdb.dbo.sp_attach_schedule @job_name = @JobNameExtendedEvents,  @schedule_name = @ScheduleNameExtendedEvents
+END
 
-$htmlReport += @"
-    </table>
-    
-    <p>For detailed information, please refer to the attached CSV report.</p>
-</body>
-</html>
-"@
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysschedules WHERE [name] = @ScheduleNameSessions)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_schedule @schedule_name = @ScheduleNameSessions, @enabled=1, @freq_type=4, @freq_interval=1, @freq_subday_type=2, @freq_subday_interval=30, @freq_relative_interval=0, @freq_recurrence_factor=0, @active_start_time=20, @active_end_time=235959
+END
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE [name] = @JobNameSessions)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_job @job_name = @JobNameSessions, @category_name = @JobCategory, @owner_login_name = @JobOwner
+  EXECUTE msdb.dbo.sp_add_jobstep @job_name = @JobNameSessions, @step_name = @JobNameSessions, @subsystem = 'CMDEXEC', @command = @JobCommandSessions, @proxy_name = @ProxyName
+  EXECUTE msdb.dbo.sp_add_jobserver @job_name = @JobNameSessions
+  EXECUTE msdb.dbo.sp_attach_schedule @job_name = @JobNameSessions,  @schedule_name = @ScheduleNameSessions
+END
 
-# Send email with HTML body and CSV attachment
-try {
-    Write-Host "`nSending email report..." -ForegroundColor Cyan
-    
-    # Update email parameters with body and attachment
-    $emailParams.Body = $htmlReport
-    $emailParams.BodyAsHtml = $true
-    $emailParams.Attachments = $reportFile
-    
-    # Send the email
-    Send-MailMessage @emailParams
-    
-    Write-Host "Email sent successfully!" -ForegroundColor Green
-}
-catch {
-    Write-Host "Failed to send email. Error: $($_.Exception.Message)" -ForegroundColor Red
-}
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysschedules WHERE [name] = @ScheduleNameStatistics)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_schedule @schedule_name = @ScheduleNameStatistics, @enabled=1, @freq_type=4, @freq_interval=1, @freq_subday_type=8, @freq_subday_interval=1, @freq_relative_interval=0, @freq_recurrence_factor=0, @active_start_date=20131207, @active_end_date=99991231, @active_start_time=0, @active_end_time=235959
+END
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE [name] = @JobNameStatistics)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_job @job_name = @JobNameStatistics, @category_name = @JobCategory, @owner_login_name = @JobOwner
+  EXECUTE msdb.dbo.sp_add_jobstep @job_name = @JobNameStatistics, @step_name = @JobNameStatistics, @subsystem = 'CMDEXEC', @command = @JobCommandStatistics, @proxy_name = @ProxyName
+  EXECUTE msdb.dbo.sp_add_jobserver @job_name = @JobNameStatistics
+  EXECUTE msdb.dbo.sp_attach_schedule @job_name = @JobNameStatistics,  @schedule_name = @ScheduleNameStatistics
+END
 
-Write-Host "`nResults saved to $reportFile" -ForegroundColor Green
-Write-Host "`nSummary:"
-Write-Host "- Total servers checked: $(($servers | Measure-Object).Count)"
-Write-Host "- Servers with expired certificates: $expiredCount"
-Write-Host "- Servers with certificates expiring within 30 days: $warningCount"
-Write-Host "- Servers with errors: $errorCount"
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysschedules WHERE [name] = @ScheduleNameDataPurge)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_schedule @schedule_name = @ScheduleNameDataPurge, @enabled=1, @freq_type=4, @freq_interval=1, @freq_subday_type=1, @freq_subday_interval=1, @freq_relative_interval=0, @freq_recurrence_factor=0, @active_start_time=0, @active_end_time=235959
+END
+IF NOT EXISTS (SELECT * FROM msdb.dbo.sysjobs WHERE [name] = @JobNameDataPurge)
+BEGIN
+  EXECUTE msdb.dbo.sp_add_job @job_name = @JobNameDataPurge, @category_name = @JobCategory, @owner_login_name = @JobOwner
+  EXECUTE msdb.dbo.sp_add_jobstep @job_name = @JobNameDataPurge, @step_name = @JobNameDataPurge, @subsystem = 'CMDEXEC', @command = @JobCommandDataPurge, @proxy_name = @ProxyName
+  EXECUTE msdb.dbo.sp_add_jobserver @job_name = @JobNameDataPurge
+  EXECUTE msdb.dbo.sp_attach_schedule @job_name = @JobNameDataPurge,  @schedule_name = @ScheduleNameDataPurge
+END
