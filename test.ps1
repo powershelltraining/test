@@ -1,477 +1,342 @@
-function Invoke-Sync {
-   
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [string]$SourceServer,
-        
-        [Parameter(Mandatory = $true)]
-        [string[]]$DestinationServers,
-        
-        [Parameter(Mandatory = $false)]
-        [System.Management.Automation.PSCredential]$Credential
-    )
+
+# Define parameters
+$SourceServer = "SourceServerName"
+$DestPathList = "c:\user\yesh\downloads"
+$DestinationServers = Get-Content $DestPathList | Where-Object { $_ -match "(^[^#]\S*)" -and $_ -notmatch "^\s+$" }
+ 
+# Email settings
+$EmailParams = @{
+    SmtpServer = "your-smtp-server.example.com"
+    Port = 25  # Change if using a different port
+    From = "SQLReports@yourcompany.com"
+    To = "dba@yourcompany.com"  # Can be comma-separated list for multiple recipients
+
+}
+
+# Create empty arrays to store results
+$JobsReport = @()
+$LinkedServersReport = @()
+$LoginsReport = @()
+
+Write-Host "Starting comparison between $SourceServer and destination servers: $($DestinationServers -join ', ')" -ForegroundColor Cyan
+
+# Get SQL Jobs from source server
+Write-Host "Getting SQL Agent jobs from source server..." -ForegroundColor Green
+$SourceJobs = Get-DbaAgentJob -SqlInstance $SourceServer
+
+# Get Linked Servers from source server
+Write-Host "Getting Linked Servers from source server..." -ForegroundColor Green
+$SourceLinkedServers = Get-DbaLinkedServer -SqlInstance $SourceServer
+
+# Get Logins from source server
+Write-Host "Getting Logins from source server..." -ForegroundColor Green
+$SourceLogins = Get-DbaLogin -SqlInstance $SourceServer | Where-Object {
+    $_.Name -notlike '##*' -and 
+    $_.Name -notlike 'NT SERVICE\*' -and 
+    $_.Name -notlike 'NT AUTHORITY\*' -and 
+    $_.Name -ne 'sa'
+}
+
+# Process each destination server
+foreach ($DestServer in $DestinationServers) {
+    Write-Host "Processing destination server: $DestServer" -ForegroundColor Yellow
     
-    begin {
-       
-        if (-not (Get-Module -Name dbatools)) {
-            try {
-                Import-Module dbatools -ErrorAction Stop
+    try {
+        # Get SQL Jobs from destination server
+        Write-Host "  Getting SQL Agent jobs from $DestServer..." -ForegroundColor Green
+        $DestJobs = Get-DbaAgentJob -SqlInstance $DestServer -ErrorAction Stop
+        
+        # Compare Jobs
+        Write-Host "  Comparing jobs..." -ForegroundColor Green
+        
+        # For jobs in source, check if they exist in destination
+        foreach ($job in $SourceJobs) {
+            $exists = $null -ne ($DestJobs | Where-Object Name -eq $job.Name)
+            $JobsReport += [PSCustomObject]@{
+                JobName = $job.Name
+                SourceServer = $SourceServer
+                ExistsOnSource = "Yes"
+                DestinationServer = $DestServer
+                ExistsOnDestination = if ($exists) { "Yes" } else { "No" }
             }
-            catch {
-                Write-Error "The dbatools module is required but could not be imported. Please install it with: Install-Module dbatools -Force"
-                return
+        }
+        
+        # For jobs in destination only, add to report
+        foreach ($job in $DestJobs) {
+            if ($null -eq ($SourceJobs | Where-Object Name -eq $job.Name)) {
+                $JobsReport += [PSCustomObject]@{
+                    JobName = $job.Name
+                    SourceServer = $SourceServer
+                    ExistsOnSource = "No"
+                    DestinationServer = $DestServer
+                    ExistsOnDestination = "Yes"
+                }
             }
         }
         
-        # Initialize report object
-        $report = @{
-            LoginsAdded = @()
-            LoginsSynced = @()
-            LinkedServersAdded = @()
-            AgentJobsAdded = @()
-            Errors = @()
+        # Get Linked Servers from destination server
+        Write-Host "  Getting Linked Servers from $DestServer..." -ForegroundColor Green
+        $DestLinkedServers = Get-DbaLinkedServer -SqlInstance $DestServer -ErrorAction Stop
+        
+        # Compare Linked Servers
+        Write-Host "  Comparing linked servers..." -ForegroundColor Green
+        
+        # For linked servers in source, check if they exist in destination
+        foreach ($linkedServer in $SourceLinkedServers) {
+            $exists = $null -ne ($DestLinkedServers | Where-Object Name -eq $linkedServer.Name)
+            $LinkedServersReport += [PSCustomObject]@{
+                LinkedServerName = $linkedServer.Name
+                SourceServer = $SourceServer
+                ExistsOnSource = "Yes"
+                DestinationServer = $DestServer
+                ExistsOnDestination = if ($exists) { "Yes" } else { "No" }
+            }
         }
         
-        # Create connection parameters
-        $connParams = @{
-            SqlInstance = $SourceServer
+        # For linked servers in destination only, add to report
+        foreach ($linkedServer in $DestLinkedServers) {
+            if ($null -eq ($SourceLinkedServers | Where-Object Name -eq $linkedServer.Name)) {
+                $LinkedServersReport += [PSCustomObject]@{
+                    LinkedServerName = $linkedServer.Name
+                    SourceServer = $SourceServer
+                    ExistsOnSource = "No"
+                    DestinationServer = $DestServer
+                    ExistsOnDestination = "Yes"
+                }
+            }
         }
         
-        if ($Credential) {
-            $connParams.Add('SqlCredential', $Credential)
+        # Get Logins from destination server
+        Write-Host "  Getting Logins from $DestServer..." -ForegroundColor Green
+        $DestLogins = Get-DbaLogin -SqlInstance $DestServer -ErrorAction Stop | Where-Object {
+            $_.Name -notlike '##*' -and 
+            $_.Name -notlike 'NT SERVICE\*' -and 
+            $_.Name -notlike 'NT AUTHORITY\*' -and 
+            $_.Name -ne 'sa'
         }
         
-        try {
-            # Test source connection
-            $sourceConn = Connect-DbaInstance @connParams -ErrorAction Stop
-            Write-Host "Successfully connected to source server: $SourceServer" -ForegroundColor Green
-        }
-        catch {
-            Write-Error "Failed to connect to source server: $_"
-            return
-        }
-    }
-    
-    process {
-        foreach ($destServer in $DestinationServers) {
-            Write-Host "`n===== Processing destination server: $destServer =====" -ForegroundColor Cyan
+        # Compare Logins
+        Write-Host "  Comparing logins..." -ForegroundColor Green
+        
+        # For logins in source, check if they exist in destination
+        foreach ($login in $SourceLogins) {
+            $destLogin = $DestLogins | Where-Object Name -eq $login.Name
+            $exists = $null -ne $destLogin
+            $sidMatch = if ($exists) {
+                [System.BitConverter]::ToString($login.Sid) -eq [System.BitConverter]::ToString($destLogin.Sid)
+            } else { $false }
             
-            # Create destination connection parameters
-            $destConnParams = @{
-                SqlInstance = $destServer
+            $LoginsReport += [PSCustomObject]@{
+                LoginName = $login.Name
+                SourceServer = $SourceServer
+                SourceSID = [System.BitConverter]::ToString($login.Sid)
+                ExistsOnSource = "Yes"
+                DestinationServer = $DestServer
+                DestinationSID = if ($exists) { [System.BitConverter]::ToString($destLogin.Sid) } else { $null }
+                ExistsOnDestination = if ($exists) { "Yes" } else { "No" }
+                SIDsMatch = if ($sidMatch) { "Yes" } else { "No" }
             }
-            
-            if ($Credential) {
-                $destConnParams.Add('SqlCredential', $Credential)
-            }
-            
-            try {
-                # Test destination connection
-                $destConn = Connect-DbaInstance @destConnParams -ErrorAction Stop
-                Write-Host "Successfully connected to destination server: $destServer" -ForegroundColor Green
-                
-                
-                Write-Host "`nProcessing logins..." -ForegroundColor Yellow
-                
-                $sourceLogins = Get-DbaLogin -SqlInstance $sourceConn -ExcludeSystemLogins
-                
-                
-                $destLogins = Get-DbaLogin -SqlInstance $destConn -ExcludeSystemLogins
-                
-                
-                $newLogins = $sourceLogins | Where-Object { $destLogins.Name -notcontains $_.Name }
-                $existingLogins = $sourceLogins | Where-Object { $destLogins.Name -contains $_.Name }
-                
-                # Copy new logins
-                if ($newLogins) {
-                    try {
-                        $copyLoginResult = Copy-DbaLogin -Source $sourceConn -Destination $destConn -Login $newLogins.Name -ExcludeSystemLogins
-                        $report.LoginsAdded += $copyLoginResult | ForEach-Object {
-                            [PSCustomObject]@{
-                                Server = $destServer
-                                Login = $_.SourceLogin
-                                Status = "Added"
-                            }
-                        }
-                        Write-Host "Added $($copyLoginResult.Count) new logins" -ForegroundColor Green
-                    }
-                    catch {
-                        $errorMsg = "Error copying new logins to $destServer`: $_"
-                        Write-Warning $errorMsg
-                        $report.Errors += [PSCustomObject]@{
-                            Server = $destServer
-                            Operation = "Copy Logins"
-                            Error = $errorMsg
-                        }
-                    }
-                }
-                else {
-                    Write-Host "No new logins to add" -ForegroundColor DarkYellow
-                }
-                
-                # Sync SIDs for existing logins
-                if ($existingLogins) {
-                    Write-Host "Checking SIDs for existing logins..." -ForegroundColor Yellow
-                    foreach ($login in $existingLogins) {
-                        $sourceSid = $login.Sid
-                        $destLogin = $destLogins | Where-Object { $_.Name -eq $login.Name }
-                        $destSid = $destLogin.Sid
-                        
-                        if ($sourceSid -ne $destSid) {
-                            try {
-                                # Sync SID
-                                $syncParams = @{
-                                    Source = $sourceConn
-                                    Destination = $destConn
-                                    Login = $login.Name
-                                }
-                                
-                                Sync-DbaLoginPermission @syncParams
-                                
-                                $report.LoginsSynced += [PSCustomObject]@{
-                                    Server = $destServer
-                                    Login = $login.Name
-                                    Status = "SID Synced"
-                                }
-                                Write-Host "Synced SID for login: $($login.Name)" -ForegroundColor Green
-                            }
-                            catch {
-                                $errorMsg = "Error syncing SID for login $($login.Name) on $destServer`: $_"
-                                Write-Warning $errorMsg
-                                $report.Errors += [PSCustomObject]@{
-                                    Server = $destServer
-                                    Operation = "Sync Login SID"
-                                    Login = $login.Name
-                                    Error = $errorMsg
-                                }
-                            }
-                        }
-                        else {
-                            Write-Host "SID already matches for login: $($login.Name)" -ForegroundColor DarkGray
-                        }
-                    }
-                }
-                
-               
-                Write-Host "`nProcessing linked servers..." -ForegroundColor Yellow
-                try {
-                    $linkedServerParams = @{
-                        Source = $sourceConn
-                        Destination = $destConn
-                    }
-                    
-                    $sourceLinkedServers = Get-DbaLinkedServer -SqlInstance $sourceConn
-                    if ($sourceLinkedServers.Count -gt 0) {
-                        $copyLinkedResult = Copy-DbaLinkedServer @linkedServerParams
-                        
-                        $report.LinkedServersAdded += $copyLinkedResult | ForEach-Object {
-                            [PSCustomObject]@{
-                                Server = $destServer
-                                LinkedServer = $_.Name
-                                Status = "Added"
-                            }
-                        }
-                        Write-Host "Added/Updated $($copyLinkedResult.Count) linked servers" -ForegroundColor Green
-                    }
-                    else {
-                        Write-Host "No linked servers found on source server" -ForegroundColor DarkYellow
-                    }
-                }
-                catch {
-                    $errorMsg = "Error copying linked servers to $destServer`: $_"
-                    Write-Warning $errorMsg
-                    $report.Errors += [PSCustomObject]@{
-                        Server = $destServer
-                        Operation = "Copy Linked Servers"
-                        Error = $errorMsg
-                    }
-                }
-                
-                #  Copy SQL Agent jobs
-                Write-Host "`nProcessing SQL Agent jobs..." -ForegroundColor Yellow
-                try {
-                    $jobParams = @{
-                        Source = $sourceConn
-                        Destination = $destConn
-                    }
-                    
-                    $sourceJobs = Get-DbaAgentJob -SqlInstance $sourceConn
-                    if ($sourceJobs.Count -gt 0) {
-                        $copyJobResult = Copy-DbaAgentJob @jobParams
-                        
-                        $report.AgentJobsAdded += $copyJobResult | ForEach-Object {
-                            [PSCustomObject]@{
-                                Server = $destServer
-                                Job = $_.Name
-                                Status = "Added"
-                            }
-                        }
-                        Write-Host "Added/Updated $($copyJobResult.Count) SQL Agent jobs" -ForegroundColor Green
-                    }
-                    else {
-                        Write-Host "No SQL Agent jobs found on source server" -ForegroundColor DarkYellow
-                    }
-                }
-                catch {
-                    $errorMsg = "Error copying SQL Agent jobs to $destServer`: $_"
-                    Write-Warning $errorMsg
-                    $report.Errors += [PSCustomObject]@{
-                        Server = $destServer
-                        Operation = "Copy SQL Agent Jobs"
-                        Error = $errorMsg
-                    }
-                }
-            }
-            catch {
-                Write-Error "Failed to connect to destination server $destServer`: $_"
-                $report.Errors += [PSCustomObject]@{
-                    Server = $destServer
-                    Operation = "Connection"
-                    Error = "Failed to connect: $_"
+        }
+        
+        # For logins in destination only, add to report
+        foreach ($login in $DestLogins) {
+            if ($null -eq ($SourceLogins | Where-Object Name -eq $login.Name)) {
+                $LoginsReport += [PSCustomObject]@{
+                    LoginName = $login.Name
+                    SourceServer = $SourceServer
+                    SourceSID = $null
+                    ExistsOnSource = "No"
+                    DestinationServer = $DestServer
+                    DestinationSID = [System.BitConverter]::ToString($login.Sid)
+                    ExistsOnDestination = "Yes"
+                    SIDsMatch = "No"
                 }
             }
         }
     }
-    
-    end {
-        # Generate final report
-        Write-Host "`n===== Sync Summary Report =====" -ForegroundColor Cyan
-        
-        Write-Host "`nLogins Added ($($report.LoginsAdded.Count)):" -ForegroundColor Yellow
-        if ($report.LoginsAdded.Count -gt 0) {
-            $report.LoginsAdded | Format-Table -AutoSize
-        }
-        else {
-            Write-Host "None" -ForegroundColor DarkGray
-        }
-        
-        Write-Host "`nLogins with SIDs Synced ($($report.LoginsSynced.Count)):" -ForegroundColor Yellow
-        if ($report.LoginsSynced.Count -gt 0) {
-            $report.LoginsSynced | Format-Table -AutoSize
-        }
-        else {
-            Write-Host "None" -ForegroundColor DarkGray
-        }
-        
-        Write-Host "`nLinked Servers Added ($($report.LinkedServersAdded.Count)):" -ForegroundColor Yellow
-        if ($report.LinkedServersAdded.Count -gt 0) {
-            $report.LinkedServersAdded | Format-Table -AutoSize
-        }
-        else {
-            Write-Host "None" -ForegroundColor DarkGray
-        }
-        
-        Write-Host "`nSQL Agent Jobs Added ($($report.AgentJobsAdded.Count)):" -ForegroundColor Yellow
-        if ($report.AgentJobsAdded.Count -gt 0) {
-            $report.AgentJobsAdded | Format-Table -AutoSize
-        }
-        else {
-            Write-Host "None" -ForegroundColor DarkGray
-        }
-        
-        if ($report.Errors.Count -gt 0) {
-            Write-Host "`nErrors Encountered ($($report.Errors.Count)):" -ForegroundColor Red
-            $report.Errors | Format-Table -AutoSize
-        }
-        
-        # Return the report object
-        return $report
+    catch {
+        Write-Host "Error connecting to $DestServer or processing data: $_" -ForegroundColor Red
     }
 }
 
-function Send-SyncReport {
-    [CmdletBinding()]
-    param (
-        [Parameter(Mandatory = $true)]
-        [PSCustomObject]$SyncReport,
-        
-        [Parameter(Mandatory = $true)]
-        [string]$SmtpServer,
-        
-        [Parameter(Mandatory = $true)]
-        [string]$From,
-        
-        [Parameter(Mandatory = $true)]
-        [string[]]$To,
-        
-        [Parameter(Mandatory = $false)]
-        [string]$Subject = "SQL Server Sync Report between servers",
-        
-        [Parameter(Mandatory = $false)]
-        [int]$SmtpPort = 25,
-        
-        [Parameter(Mandatory = $false)]
-        [System.Management.Automation.PSCredential]$Credential,
-        
-        [Parameter(Mandatory = $false)]
-        [switch]$UseSsl
-    )
-    
-    # Create HTML table style
-    $style = @"
-<style>
-    body { font-family: Arial, sans-serif; }
-    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-    th { background-color: #4CAF50; color: white; text-align: left; padding: 8px; }
-    td { border: 1px solid #ddd; padding: 8px; }
-    tr:nth-child(even) { background-color: #f2f2f2; }
-    h2 { color: #4CAF50; }
-    .summary { font-weight: bold; margin-bottom: 5px; }
-    .no-data { color: #888; font-style: italic; }
-</style>
-"@
+# Create HTML report
+$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$reportDate = Get-Date -Format "MMMM d, yyyy HH:mm:ss"
 
-    # Create HTML body
-    $htmlBody = @"
+# Create HTML report content
+$htmlReport = @"
 <!DOCTYPE html>
 <html>
 <head>
-    $style
+    <title>SQL Server Comparison Reports</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #0066cc; }
+        h2 { color: #009933; margin-top: 30px; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 30px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+        .mismatch { background-color: #ffe6e6; }
+        .missing { background-color: #fff2e6; }
+        .summary { margin-bottom: 20px; }
+    </style>
 </head>
 <body>
-    <h1>SQL Server Sync Report</h1>
+    <h1>SQL Server Comparison Reports</h1>
+    <p>Source Server: <strong>$SourceServer</strong></p>
+    <p>Destination Servers: <strong>$($DestinationServers -join ', ')</strong></p>
+    <p>Generated on: <strong>$reportDate</strong></p>
     
-    <h2>Logins Added ($(($SyncReport.LoginsAdded).Count))</h2>
-"@
-
-    if ($SyncReport.LoginsAdded.Count -gt 0) {
-        $htmlBody += $SyncReport.LoginsAdded | ConvertTo-Html -Fragment | Out-String
-    } else {
-        $htmlBody += "<p class='no-data'>No logins were added during this Sync.</p>"
-    }
-
-    $htmlBody += @"
+    <div class="summary">
+        <h2>Summary</h2>
+        <p>Total Jobs compared: <strong>$($JobsReport.Count)</strong></p>
+        <p>Total Linked Servers compared: <strong>$($LinkedServersReport.Count)</strong></p>
+        <p>Total Logins compared: <strong>$($LoginsReport.Count)</strong></p>
+        <p>Missing Jobs: <strong>$(($JobsReport | Where-Object { $_.ExistsOnSource -eq "No" -or $_.ExistsOnDestination -eq "No" }).Count)</strong></p>
+        <p>Missing Linked Servers: <strong>$(($LinkedServersReport | Where-Object { $_.ExistsOnSource -eq "No" -or $_.ExistsOnDestination -eq "No" }).Count)</strong></p>
+        <p>Missing Logins: <strong>$(($LoginsReport | Where-Object { $_.ExistsOnSource -eq "No" -or $_.ExistsOnDestination -eq "No" }).Count)</strong></p>
+        <p>SID Mismatches: <strong>$(($LoginsReport | Where-Object { $_.ExistsOnSource -eq "Yes" -and $_.ExistsOnDestination -eq "Yes" -and $_.SIDsMatch -eq "No" }).Count)</strong></p>
+    </div>
     
-    <h2>Logins with SIDs Synced ($(($SyncReport.LoginsSynced).Count))</h2>
+    <h2>SQL Agent Jobs Comparison</h2>
+    <table>
+        <tr>
+            <th>Job Name</th>
+            <th>Source Server</th>
+            <th>Exists On Source</th>
+            <th>Destination Server</th>
+            <th>Exists On Destination</th>
+        </tr>
 "@
 
-    if ($SyncReport.LoginsSynced.Count -gt 0) {
-        $htmlBody += $SyncReport.LoginsSynced | ConvertTo-Html -Fragment | Out-String
-    } else {
-        $htmlBody += "<p class='no-data'>No login SIDs were synced during this Sync.</p>"
+foreach ($job in ($JobsReport | Sort-Object DestinationServer, JobName)) {
+    $rowClass = ""
+    if ($job.ExistsOnSource -eq "No" -or $job.ExistsOnDestination -eq "No") {
+        $rowClass = " class='missing'"
     }
-
-    $htmlBody += @"
     
-    <h2>Linked Servers Added ($(($SyncReport.LinkedServersAdded).Count))</h2>
+    $htmlReport += @"
+        <tr$rowClass>
+            <td>$($job.JobName)</td>
+            <td>$($job.SourceServer)</td>
+            <td>$($job.ExistsOnSource)</td>
+            <td>$($job.DestinationServer)</td>
+            <td>$($job.ExistsOnDestination)</td>
+        </tr>
 "@
+}
 
-    if ($SyncReport.LinkedServersAdded.Count -gt 0) {
-        $htmlBody += $SyncReport.LinkedServersAdded | ConvertTo-Html -Fragment | Out-String
-    } else {
-        $htmlBody += "<p class='no-data'>No linked servers were added during this Sync.</p>"
-    }
-
-    $htmlBody += @"
+$htmlReport += @"
+    </table>
     
-    <h2>SQL Agent Jobs Added ($(($SyncReport.AgentJobsAdded).Count))</h2>
+    <h2>Linked Servers Comparison</h2>
+    <table>
+        <tr>
+            <th>Linked Server Name</th>
+            <th>Source Server</th>
+            <th>Exists On Source</th>
+            <th>Destination Server</th>
+            <th>Exists On Destination</th>
+        </tr>
 "@
 
-    if ($SyncReport.AgentJobsAdded.Count -gt 0) {
-        $htmlBody += $SyncReport.AgentJobsAdded | ConvertTo-Html -Fragment | Out-String
-    } else {
-        $htmlBody += "<p class='no-data'>No SQL Agent jobs were added during this Sync.</p>"
+foreach ($linkedServer in ($LinkedServersReport | Sort-Object DestinationServer, LinkedServerName)) {
+    $rowClass = ""
+    if ($linkedServer.ExistsOnSource -eq "No" -or $linkedServer.ExistsOnDestination -eq "No") {
+        $rowClass = " class='missing'"
     }
-
-    if ($SyncReport.Errors.Count -gt 0) {
-        $htmlBody += @"
-        
-        <h2>Errors Encountered ($(($SyncReport.Errors).Count))</h2>
+    
+    $htmlReport += @"
+        <tr$rowClass>
+            <td>$($linkedServer.LinkedServerName)</td>
+            <td>$($linkedServer.SourceServer)</td>
+            <td>$($linkedServer.ExistsOnSource)</td>
+            <td>$($linkedServer.DestinationServer)</td>
+            <td>$($linkedServer.ExistsOnDestination)</td>
+        </tr>
 "@
-        $htmlBody += $SyncReport.Errors | ConvertTo-Html -Fragment | Out-String
-    }
+}
 
-    $htmlBody += @"
-    <p>This report was automatically generated after SQL Server Sync of logins ,linked servers and Jobs.</p>
+$htmlReport += @"
+    </table>
+    
+    <h2>Logins Comparison</h2>
+    <table>
+        <tr>
+            <th>Login Name</th>
+            <th>Source Server</th>
+            <th>Exists On Source</th>
+            <th>Destination Server</th>
+            <th>Exists On Destination</th>
+            <th>SIDs Match</th>
+            <th>Source SID</th>
+            <th>Destination SID</th>
+        </tr>
+"@
+
+foreach ($login in ($LoginsReport | Sort-Object DestinationServer, LoginName)) {
+    $rowClass = ""
+    if ($login.ExistsOnSource -eq "No" -or $login.ExistsOnDestination -eq "No") {
+        $rowClass = " class='missing'"
+    } elseif ($login.SIDsMatch -eq "No") {
+        $rowClass = " class='mismatch'"
+    }
+    
+    $htmlReport += @"
+        <tr$rowClass>
+            <td>$($login.LoginName)</td>
+            <td>$($login.SourceServer)</td>
+            <td>$($login.ExistsOnSource)</td>
+            <td>$($login.DestinationServer)</td>
+            <td>$($login.ExistsOnDestination)</td>
+            <td>$($login.SIDsMatch)</td>
+            <td>$($login.SourceSID)</td>
+            <td>$($login.DestinationSID)</td>
+        </tr>
+"@
+}
+
+$htmlReport += @"
+    </table>
+    
+    <p><em>Color coding: Missing objects are highlighted in orange, SID mismatches are highlighted in red.</em></p>
 </body>
 </html>
 "@
 
-    # Create email parameters
-    $mailParams = @{
-        SmtpServer = $SmtpServer
-        From = $From
-        To = $To
-        Subject = $Subject
-        Body = $htmlBody
-        BodyAsHtml = $true
-        Port = $SmtpPort
-    }
+# Save HTML report locally (optional)
+$outputPath = "$PSScriptRoot\Reports"
+if (-not (Test-Path -Path $outputPath)) {
+    New-Item -Path $outputPath -ItemType Directory | Out-Null
+}
+$htmlReportPath = "$outputPath\SQLServerComparisonReport_$timestamp.html"
+$htmlReport | Out-File -FilePath $htmlReportPath -Encoding utf8
 
-    if ($Credential) {
-        $mailParams.Add('Credential', $Credential)
-    }
+Write-Host "`nHTML Report saved to:" -ForegroundColor Cyan
+Write-Host "$htmlReportPath" -ForegroundColor Yellow
 
-    if ($UseSsl) {
-        $mailParams.Add('UseSsl', $true)
-    }
-
-    # Send the email
-    try {
-        Send-MailMessage @mailParams
-        Write-Host "Sync report email sent successfully to $($To -join ', ')" -ForegroundColor Green
-    }
-    catch {
-        Write-Error "Failed to send Sync report email: $_"
-    }
+# Send email with HTML report
+try {
+    $EmailParams["Subject"] = "SQL Server Comparison Report - $reportDate"
+    $EmailParams["Body"] = $htmlReport
+    $EmailParams["BodyAsHtml"] = $true
+    
+    Write-Host "`nSending email report..." -ForegroundColor Cyan
+    Send-MailMessage @EmailParams
+    Write-Host "Email sent successfully!" -ForegroundColor Green
+}
+catch {
+    Write-Host "Error sending email: $_" -ForegroundColor Red
+    Write-Host "HTML report is still saved locally at: $htmlReportPath" -ForegroundColor Yellow
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-# Example usage:
-try
-	{
-# Invoke-Sync -SourceServer "SourceSQL" -DestinationServers "DestSQL1", "DestSQL2"
-}
-#Error Handeling
-	catch [Exception]
-	{
-	    write-Host "---------------------------------------------------------"  -ForegroundColor red;
-		write-Host "error "  -ForegroundColor red;
-		
-		# Handle the error
-	    $err = $_.Exception;
-	    write-Host $err.Message -ForegroundColor red;
-	    while( $err.InnerException ) 
-	    {
-	    	$err = $err.InnerException;
-	        write-Host $err.Message -ForegroundColor Magenta;
-		}
-		
-		write-Host "---------------------------------------------------------"  -ForegroundColor red;
-	}
-	
-try
-	{	
-	
-# Send-SyncReport -SyncReport $report -SmtpServer "smtp.company.com" -From "sqlSync@company.com" -To "dba@company.com", "manager@company.com"
-
-}
-#Error Handeling
-	catch [Exception]
-	{
-	    write-Host "---------------------------------------------------------"  -ForegroundColor red;
-		write-Host "error "  -ForegroundColor red;
-		
-		# Handle the error
-	    $err = $_.Exception;
-	    write-Host $err.Message -ForegroundColor red;
-	    while( $err.InnerException ) 
-	    {
-	    	$err = $err.InnerException;
-	        write-Host $err.Message -ForegroundColor Magenta;
-		}
-		
-		write-Host "---------------------------------------------------------"  -ForegroundColor red;
-	}
+# Display summary in console
+Write-Host "`nComparison Summary:" -ForegroundColor Cyan
+Write-Host "Total Jobs compared: $($JobsReport.Count)" -ForegroundColor Green
+Write-Host "Total Linked Servers compared: $($LinkedServersReport.Count)" -ForegroundColor Green
+Write-Host "Total Logins compared: $($LoginsReport.Count)" -ForegroundColor Green
+Write-Host "Missing Jobs: $(($JobsReport | Where-Object { $_.ExistsOnSource -eq 'No' -or $_.ExistsOnDestination -eq 'No' }).Count)" -ForegroundColor Yellow
+Write-Host "Missing Linked Servers: $(($LinkedServersReport | Where-Object { $_.ExistsOnSource -eq 'No' -or $_.ExistsOnDestination -eq 'No' }).Count)" -ForegroundColor Yellow
+Write-Host "Missing Logins: $(($LoginsReport | Where-Object { $_.ExistsOnSource -eq 'No' -or $_.ExistsOnDestination -eq 'No' }).Count)" -ForegroundColor Yellow
+Write-Host "SID Mismatches: $(($LoginsReport | Where-Object { $_.ExistsOnSource -eq 'Yes' -and $_.ExistsOnDestination -eq 'Yes' -and $_.SIDsMatch -eq 'No' }).Count)" -ForegroundColor Yellow
