@@ -1,7 +1,7 @@
 
 # Define parameters
 $SourceServer = "SourceServerName"
-$DestPathList = "c:\user\yesh\downloads"
+$DestPathList = "c:\user\yesh\downloads\destservers.txt"
 $DestinationServers = Get-Content $DestPathList | Where-Object { $_ -match "(^[^#]\S*)" -and $_ -notmatch "^\s+$" }
  
 # Email settings
