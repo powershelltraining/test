@@ -1,3 +1,13 @@
-=IIF(DateDiff("d", Parameters!StartDate.Value, Parameters!EndDate.Value) > 10, 
-     Nothing, 
-     Fields!YourDateField.Value)
+Public Function ValidateDateRange(ByVal fromDate As DateTime, ByVal toDate As DateTime) As String
+    If fromDate > toDate Then
+        Return "Error: From Date cannot be after To Date"
+    End If
+    
+    Dim daysDiff As Integer = DateDiff(DateInterval.Day, fromDate, toDate)
+    
+    If daysDiff > 95 Then
+        Return "Error: Date range cannot exceed 95 days"
+    End If
+    
+    Return "Valid"
+End Function
