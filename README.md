@@ -1,10 +1,23 @@
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\SpApiService.cs(61,55): warning CS8604: Possible null reference argument for parameter 'clientId' in 'Task<string?> SpApiService.GetAccessTokenAsync(string clientId, string clientSecret, string refreshToken)'.
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\SpApiService.cs(61,71): warning CS8604: Possible null reference argument for parameter 'clientSecret' in 'Task<string?> SpApiService.GetAccessTokenAsync(string clientId, string clientSecret, string refreshToken)'.
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\SpApiService.cs(61,91): warning CS8604: Possible null reference argument for parameter 'refreshToken' in 'Task<string?> SpApiService.GetAccessTokenAsync(string clientId, string clientSecret, string refreshToken)'.
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\SpApiService.cs(100,55): warning CS8604: Possible null reference argument for parameter 'clientId' in 'Task<string?> SpApiService.GetAccessTokenAsync(string clientId, string clientSecret, string refreshToken)'.
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\SpApiService.cs(100,71): warning CS8604: Possible null reference argument for parameter 'clientSecret' in 'Task<string?> SpApiService.GetAccessTokenAsync(string clientId, string clientSecret, string refreshToken)'.
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\SpApiService.cs(100,91): warning CS8604: Possible null reference argument for parameter 'refreshToken' in 'Task<string?> SpApiService.GetAccessTokenAsync(string clientId, string clientSecret, string refreshToken)'.
-C:\sqlai\FBA5\Application\AmazonFBAManager.Data\Services\ExportService.cs(160,71): warning CS8601: Possible null reference assignment.
-CSC : error CS2012: Cannot open 'C:\sqlai\FBA5\Application\AmazonFBAManager.Data\obj\Debug\net8.0\AmazonFBAManager.Data.dll' for writing -- The process cannot access the file 'C:\sqlai\FBA5\Application\AmazonFBAManager.Data\obj\Debug\net8.0\AmazonFBAManager.Data.dll' because it is being used by another process.; file may be locked by 'Microsoft Defender Antivirus Service' (4824)
+http://localhost:5005/Help/Topic/S1_ALERT_THRESHOLDS
 
-The build failed. Fix the build errors and run again.
+http://localhost:5005/Settings
+Something went wrong
+
+An unexpected error occurred. The error has been logged.
+fail: Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddleware[1]
+      An unhandled exception has occurred while executing the request.
+      System.InvalidOperationException: Unable to resolve service for type 'AmazonFBAManager.Data.Services.ISpApiService' while attempting to activate 'AmazonFBAManager.Web.Controllers.SettingsController'.
+         at Microsoft.Extensions.DependencyInjection.ActivatorUtilities.ThrowHelperUnableToResolveService(Type type, Type requiredBy)
+         at lambda_method82(Closure, IServiceProvider, Object[])
+         at Microsoft.AspNetCore.Mvc.Controllers.ControllerFactoryProvider.<>c__DisplayClass6_0.<CreateControllerFactory>g__CreateController|0(ControllerContext controllerContext)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.InvokeInnerFilterAsync()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeNextResourceFilter>g__Awaited|25_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.Rethrow(ResourceExecutedContextSealed context)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.InvokeFilterPipelineAsync()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+         at Microsoft.AspNetCore.Authorization.AuthorizationMiddleware.Invoke(HttpContext context)
